@@ -29,7 +29,13 @@ export default function Home() {
 
   const fetchLogs = async () => {
     try {
-      const proxyUrl = `/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
+      // const proxyUrl = `/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
+      //   jenkinsUrl
+      // )}&jobName=${encodeURIComponent(jobName)}&buildNumber=${buildNumber}&start=${start}&username=${encodeURIComponent(
+      //   username
+      // )}&apiToken=${encodeURIComponent(apiToken)}`;
+
+      const proxyUrl = `http://localhost:8000/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
         jenkinsUrl
       )}&jobName=${encodeURIComponent(jobName)}&buildNumber=${buildNumber}&start=${start}&username=${encodeURIComponent(
         username
@@ -38,21 +44,12 @@ export default function Home() {
       const res = await fetch(proxyUrl);
       if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
 
-      const newChunk = await res.text();
-      const moreData = res.headers.get("x-more-data") === "true";
-      const nextStart = parseInt(res.headers.get("x-text-size") || start, 10);
+      const data = await res.json();
+      
+      setLogs((prev) => prev + data.logs);
+      setStart(data.next_start);
 
-      console.log("Fetched chunk length:", newChunk.length);
-      console.log("Previous start:", start, "Next start:", nextStart);
-      console.log("More data?", moreData);
-
-      if (newChunk.length > 0) {
-        setLogs((prev) => prev + newChunk);
-        setStart(nextStart);
-      }
-
-      if (!moreData) {
-        // If Jenkins signals no more data, stop polling
+      if (!data.more_data) {
         setIsRunning(false);
         console.log("All logs fetched, streaming finished");
       }
