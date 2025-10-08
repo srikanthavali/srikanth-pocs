@@ -7,19 +7,29 @@ export default function Home() {
   const [buildNumber, setBuildNumber] = useState("1");
   const [username, setUsername] = useState("admin");
   const [apiToken, setApiToken] = useState("11675a28f9e88da72c7844548ac4aa14f0");
-  const [logs, setLogs] = useState("");
+
+  const [displayLogs, setDisplayLogs] = useState(""); // only visible window
   const [isRunning, setIsRunning] = useState(false);
   const [start, setStart] = useState(0);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const fullLogBuffer = useRef([]); // complete log buffer
+  const lastRenderRef = useRef(Date.now());
   const logRef = useRef(null);
 
-  // Auto-scroll log area
+  // Auto-scroll (only if user is near bottom)
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+    const logBox = logRef.current;
+    if (logBox) {
+      const isNearBottom =
+        logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 100;
+      if (isNearBottom) {
+        logBox.scrollTop = logBox.scrollHeight;
+      }
     }
-  }, [logs]);
+  }, [displayLogs]);
 
-  // poll every 1 second
+  // Poll Jenkins logs every 1s
   useEffect(() => {
     if (isRunning) {
       const interval = setInterval(fetchLogs, 1000);
@@ -29,12 +39,6 @@ export default function Home() {
 
   const fetchLogs = async () => {
     try {
-      // const proxyUrl = `/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
-      //   jenkinsUrl
-      // )}&jobName=${encodeURIComponent(jobName)}&buildNumber=${buildNumber}&start=${start}&username=${encodeURIComponent(
-      //   username
-      // )}&apiToken=${encodeURIComponent(apiToken)}`;
-
       const proxyUrl = `http://localhost:8000/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
         jenkinsUrl
       )}&jobName=${encodeURIComponent(jobName)}&buildNumber=${buildNumber}&start=${start}&username=${encodeURIComponent(
@@ -43,27 +47,51 @@ export default function Home() {
 
       const res = await fetch(proxyUrl);
       if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
-
       const data = await res.json();
-      
-      setLogs((prev) => prev + data.logs);
+
+      // Split new chunk into lines and append
+      const newLines = data.logs.split("\n");
+      fullLogBuffer.current.push(...newLines);
+
+      // Limit buffer size (keep last 3k lines)
+      const MAX_LINES = 3000;
+      const VISIBLE_LINES = 1000;
+      if (fullLogBuffer.current.length > MAX_LINES) {
+        fullLogBuffer.current = fullLogBuffer.current.slice(-MAX_LINES);
+      }
+
+      // Update visible window (last 500 lines)
+      const visibleLines = fullLogBuffer.current.slice(-VISIBLE_LINES).join("\n");
+
+      // Re-render only every 500ms
+      if (Date.now() - lastRenderRef.current > 500) {
+        setDisplayLogs(visibleLines);
+        lastRenderRef.current = Date.now();
+      }
+
       setStart(data.next_start);
 
       if (!data.more_data) {
         setIsRunning(false);
-        console.log("All logs fetched, streaming finished");
+        console.log("✅ All logs fetched, streaming finished");
       }
     } catch (err) {
-      console.error("Error fetching logs:", err);
+      setErrorMessage(`Error fetching logs: ${err.message}`);
       setIsRunning(false);
+
+      setTimeout(() => setErrorMessage(""), 5000);
     }
   };
 
   const startStreaming = () => {
-    setLogs("");
+    setErrorMessage("");
+    fullLogBuffer.current = [];
+    setDisplayLogs("");
     setStart(0);
     setIsRunning(true);
   };
+
+  const stopStreaming = () => setIsRunning(false);
 
   return (
     <div style={{ padding: 2, fontFamily: "monospace" }}>
@@ -179,10 +207,32 @@ export default function Home() {
               whiteSpace: "nowrap",
             }}
           >
-            {isRunning ? "Streaming..." : "Start Streaming"}
+            {isRunning ? "Streaming..." : "Start"}
+          </button>
+
+          <button
+            onClick={stopStreaming}
+            disabled={!isRunning}
+            style={{
+              padding: "5px 12px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#dc3545",
+              color: "#fff",
+              cursor: !isRunning ? "not-allowed" : "pointer",
+              fontSize: "13px",
+            }}
+          >
+            Stop
           </button>
         </div>
       </div>
+
+      {errorMessage && (
+        <div style={{ color: "red", marginBottom: "5px", fontSize: "13px" }}>
+          {errorMessage}
+        </div>
+      )}
 
       <div
         ref={logRef}
@@ -248,7 +298,7 @@ export default function Home() {
         </div>
 
         <div style={{ padding: "5px 10px" }}>
-          {logs || "Logs will appear here..."}
+          {displayLogs || "Logs will appear here..."}
         </div>
       </div>
     </div>
