@@ -47,7 +47,15 @@ export default function Home() {
 
       const res = await fetch(proxyUrl);
       if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
-      const data = await res.json();
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.warn("⚠️ Incomplete JSON chunk received, retrying...");
+        return; // skip this tick
+      }
 
       // Split new chunk into lines and append
       const newLines = data.logs.split("\n");
