@@ -1,0 +1,26 @@
+*.pyc
+__pycache__/
+db.sqlite3
+*.log
+staticfiles/
+.idea/
+.vscode/
+
+# Environments
+.env.*
+.env*
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+**/migrations/*.py
+**/migrations/*.pyc
+# ...except keep the __init__.py so Django still sees it as a package
+!**/migrations/__init__.py
+
+
+downloads/
