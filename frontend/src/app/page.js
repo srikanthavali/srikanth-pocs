@@ -37,6 +37,8 @@ export default function Home() {
     }
   }, [isRunning, start]);
 
+  const DELIMITER = "\n__JENKINS_METADATA__\n";
+
   const fetchLogs = async () => {
     try {
       const proxyUrl = `http://localhost:8000/api/jenkins/proxy?jenkinsUrl=${encodeURIComponent(
@@ -49,16 +51,15 @@ export default function Home() {
       if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
 
       const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.warn("⚠️ Incomplete JSON chunk received, retrying...");
-        return; // skip this tick
+      const [logs, metadataStr] = text.split(DELIMITER);  
+
+      let data = { more_data: false, next_start: start };
+      if (metadataStr) {
+        data = JSON.parse(metadataStr);
       }
 
       // Split new chunk into lines and append
-      const newLines = data.logs.split("\n");
+      const newLines = logs.split("\n");
       fullLogBuffer.current.push(...newLines);
 
       // Limit buffer size (keep last 3k lines)
@@ -86,7 +87,6 @@ export default function Home() {
     } catch (err) {
       setErrorMessage(`Error fetching logs: ${err.message}`);
       setIsRunning(false);
-
       setTimeout(() => setErrorMessage(""), 5000);
     }
   };

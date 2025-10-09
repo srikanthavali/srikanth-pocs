@@ -1,4 +1,5 @@
-from django.http import JsonResponse
+from django.http import HttpResponse
+import json
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -11,12 +12,12 @@ def jenkins_proxy(request):
     api_token = request.GET.get("apiToken")
 
     if not all([jenkins_url, job_name, build_number, username, api_token]):
-        return JsonResponse({"error": "Missing parameters"}, status=400)
+        return HttpResponse("Missing parameters", status=400, content_type="text/plain")
 
     try:
         start_int = int(start)
     except ValueError:
-        return JsonResponse({"error": "Invalid start value"}, status=400)
+        return HttpResponse("Invalid start value", status=400, content_type="text/plain")
 
     url = f"{jenkins_url}/job/{job_name}/{build_number}/logText/progressiveText?start={start_int}"
 
@@ -28,10 +29,15 @@ def jenkins_proxy(request):
         more_data = r.headers.get("x-more-data", "false") == "true"
         next_start = int(r.headers.get("x-text-size", start_int))
 
-        return JsonResponse({
-            "logs": logs,
+        # Create metadata JSON
+        metadata = json.dumps({
             "more_data": more_data,
             "next_start": next_start
         })
+
+        # Use a clear delimiter to separate logs and metadata
+        delimiter = "\n__JENKINS_METADATA__\n"
+        return HttpResponse(logs + delimiter + metadata, content_type="text/plain")
+
     except requests.RequestException as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        return HttpResponse(f"Error: {str(e)}", status=500, content_type="text/plain")
