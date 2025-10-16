@@ -75,7 +75,7 @@ def get_running_build_number(job_name):
 
     return running_build_number
 
-@dramatiq.actor
+@dramatiq.actor(time_limit=24*60*60*1000)
 def start_and_poll_build(build_id):
     """Start Jenkins build and poll until completion (basic)."""
     build_record = None
