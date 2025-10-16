@@ -98,6 +98,9 @@ def start_and_poll_build(build_id):
             # Load last log_offset from meta
             meta = read_meta(job_name, running_build_number) or {}
             log_offset = meta.get("last_log_offset", 0)
+
+            # assign build_number for later usage
+            build_number = running_build_number
         else:
             logger.info(f"Starting build for job={job_name}")
             # --- 2️⃣ Trigger new build as usual ---
