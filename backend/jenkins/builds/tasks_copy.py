@@ -131,12 +131,19 @@ def start_and_poll_build(build_id):
             log_api = f"{JENKINS_URL}/job/{job_name}/{build_number}/logText/progressiveText"
             r_log = http_get(log_api, params={"start": log_offset}, timeout=10, skip_warning=True)
             more_data = False
+
             if r_log:
                 if r_log.text:
                     append_to_log(job_name, build_number, r_log.text)
                     log_offset = int(r_log.headers.get("X-Text-Size", log_offset + len(r_log.text)))
                     # logger.info(f"✅ Progressive log fetch SUCCESS for {job_name} #{build_number}, offset={log_offset}")
-                    pass
+
+                    # Save intermediate log_offset for resumability
+                    save_meta(job_name, build_record.build_number, {
+                        "status": build_record.status,
+                        "start_time": str(build_record.start_time),
+                        "last_log_offset": log_offset,
+                    })
                 else:
                     # logger.info(f"ℹ️ No new logs yet for {job_name} #{build_number}, offset={log_offset}")
                     pass
@@ -157,13 +164,33 @@ def start_and_poll_build(build_id):
                     building = info.get("building", True)
                     result = info.get("result")
                     # logger.info(f"📊 Build status check SUCCESS for {job_name} #{build_number}: building={building}, result={result}")
-                    pass
                 else:
                     # logger.warning(f"⏱️ Build status check TIMEOUT for {job_name} #{build_number}")
                     pass
             
-            # Exit condition: finished and no more logs
-            if not building and not more_data:
+            if not building:
+                stable_offset = False
+                while not stable_offset:
+                    r_log = http_get(log_api, params={"start": log_offset}, timeout=10, skip_warning=True)
+                    if r_log:
+                        text = r_log.text or ""
+                        append_to_log(job_name, build_record.build_number, text)
+                        new_offset = int(r_log.headers.get("X-Text-Size", log_offset + len(text)))
+                        save_meta(job_name, build_record.build_number, {
+                            "status": build_record.status,
+                            "start_time": str(build_record.start_time),
+                            "last_log_offset": new_offset,
+                        })
+
+                        if new_offset == log_offset and r_log.headers.get("X-More-Data", "false").lower() == "false":
+                            stable_offset = True  # no new logs, safe to exit
+                        log_offset = new_offset
+                    else:
+                        time.sleep(1)
+
+                    time.sleep(1)              
+
+                # Mark build as finished
                 build_record.status = result or "UNKNOWN"
                 build_record.end_time = timezone.now()
                 build_record.save()
@@ -172,14 +199,13 @@ def start_and_poll_build(build_id):
 
             time.sleep(poll_interval_logs)
 
-        logger.info(f"✅ Log collection complete for {job_name} #{build_number}")
-        save_meta(job_name, build_number, {
+        save_meta(job_name, build_record.build_number, {
             "status": build_record.status,
             "start_time": str(build_record.start_time),
             "end_time": str(build_record.end_time),
             "last_log_offset": log_offset,
         })
-        logger.info(f"📦 Meta saved and all tasks completed for {job_name} #{build_number}")
+        logger.info(f"✅ Log collection complete and meta saved for {job_name} #{build_record.build_number}")
 
     except Exception as e:
         logger.exception(f"Error in start_and_poll_build: {e}")
