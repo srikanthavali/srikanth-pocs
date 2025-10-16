@@ -55,6 +55,26 @@ def http_get(url, params=None, timeout=10, skip_warning=False):
         logger.error(f"GET {url} failed (unexpected exception): {e}")
         return None
 
+def get_running_build_number(job_name):
+    running_build_number = None
+
+    # 1️⃣ Check the latest build only
+    r_job = http_get(f"{JENKINS_URL}/job/{job_name}/api/json?tree=lastBuild[number,building]")
+    if r_job:
+        last_build = r_job.json().get("lastBuild")
+        if last_build and last_build.get("building"):
+            return last_build["number"]
+
+    # 2️⃣ Also check the queue to see if a build is waiting
+    r_queue = http_get(f"{JENKINS_URL}/queue/api/json?tree=items[task[name],id]")
+    if r_queue:
+        for item in r_queue.json().get("items", []):
+            if item.get("task", {}).get("name") == job_name:
+                # Jenkins queue item id can be used if you want
+                return f"queued-{item['id']}"
+
+    return running_build_number
+
 @dramatiq.actor
 def start_and_poll_build(build_id):
     """Start Jenkins build and poll until completion (basic)."""
@@ -66,16 +86,8 @@ def start_and_poll_build(build_id):
         logger.info(f"Preparing build for job={job_name}")
 
         # --- 1️⃣ Check for already running build ---
-        running_build_number = None
-        r_job = http_get(f"{JENKINS_URL}/job/{job_name}/api/json")
-        if r_job:
-            info = r_job.json()
-            for b in info.get("builds", []):
-                b_info = http_get(f"{JENKINS_URL}/job/{job_name}/{b['number']}/api/json", skip_warning=True)
-                if b_info and b_info.json().get("building"):
-                    running_build_number = b['number']
-                    break
-        
+        running_build_number = get_running_build_number(job_name)
+
         if running_build_number:
             logger.info(f"Build already running: {job_name} #{running_build_number}, attaching logs")
             build_record.build_number = running_build_number
