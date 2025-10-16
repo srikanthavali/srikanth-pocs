@@ -71,7 +71,7 @@ class BuildRecordViewSet(viewsets.ModelViewSet):
         last_lines = int(request.query_params.get("last", 1000))
         full = request.query_params.get("full", "false").lower() == "true"
 
-        log_file_path = os.path.join("logs", f"{build_record.job_name}_{build_record.build_number}.log")
+        log_file_path = os.path.join("builds", "logs", f"{build_record.job_name}", f"{build_record.build_number}", f"full.log")
 
         if not os.path.exists(log_file_path):
             return Response({"detail": "Log file not found"}, status=status.HTTP_404_NOT_FOUND)

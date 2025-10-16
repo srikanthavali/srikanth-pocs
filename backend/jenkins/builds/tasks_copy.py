@@ -10,7 +10,7 @@ import logging
 from django.utils import timezone
 import dramatiq
 from .models import BuildRecord
-from .storage import append_to_log, save_meta
+from .storage import append_to_log, save_meta, read_meta
 from builds.broker import broker
 
 JENKINS_URL = "http://localhost:8080"
@@ -59,45 +59,68 @@ def http_get(url, params=None, timeout=10, skip_warning=False):
 def start_and_poll_build(build_id):
     """Start Jenkins build and poll until completion (basic)."""
     build_record = None
+    log_offset = 0
     try:
         build_record = BuildRecord.objects.get(id=build_id)
         job_name = build_record.job_name
-        logger.info(f"Starting build for job={job_name}")
+        logger.info(f"Preparing build for job={job_name}")
 
-        # Trigger build
-        trigger_url = f"{JENKINS_URL}/job/{job_name}/build?delay=0sec"
-        r = http_post(trigger_url)
-        if not r:
-            build_record.status = "FAILED"
-            build_record.save()
-            return
-        
-        # Wait for build number
-        build_number = None
-        for _ in range(10):
-            api_url = f"{JENKINS_URL}/job/{job_name}/api/json"
-            r = http_get(api_url)
-            if r:
-                info = r.json()
-                if info.get("builds"):
-                    build_number = info["builds"][0]["number"]
+        # --- 1️⃣ Check for already running build ---
+        running_build_number = None
+        r_job = http_get(f"{JENKINS_URL}/job/{job_name}/api/json")
+        if r_job:
+            info = r_job.json()
+            for b in info.get("builds", []):
+                b_info = http_get(f"{JENKINS_URL}/job/{job_name}/{b['number']}/api/json", skip_warning=True)
+                if b_info and b_info.json().get("building"):
+                    running_build_number = b['number']
                     break
-            time.sleep(2)
-
-        if not build_number:
-            logger.error("Build number not found")
-            build_record.status = "FAILED"
-            build_record.save()
-            return
         
-        build_record.build_number = build_number
-        build_record.status = "RUNNING"
-        build_record.start_time = timezone.now()
-        build_record.save()
-        logger.info(f"Build started with build_number={build_number}")
+        if running_build_number:
+            logger.info(f"Build already running: {job_name} #{running_build_number}, attaching logs")
+            build_record.build_number = running_build_number
+            build_record.status = "RUNNING"
+            build_record.start_time = build_record.start_time or timezone.now()
+            build_record.save()
+
+            # Load last log_offset from meta
+            meta = read_meta(job_name, running_build_number) or {}
+            log_offset = meta.get("last_log_offset", 0)
+        else:
+            logger.info(f"Starting build for job={job_name}")
+            # --- 2️⃣ Trigger new build as usual ---
+            trigger_url = f"{JENKINS_URL}/job/{job_name}/build?delay=0sec"
+            r = http_post(trigger_url)
+            if not r:
+                build_record.status = "FAILED"
+                build_record.save()
+                return
+
+            # Wait for build number
+            build_number = None
+            for _ in range(10):
+                r_info = http_get(f"{JENKINS_URL}/job/{job_name}/api/json")
+                if r_info:
+                    info = r_info.json()
+                    if info.get("builds"):
+                        build_number = info["builds"][0]["number"]
+                        break
+                time.sleep(2)
+
+            if not build_number:
+                logger.error("Build number not found")
+                build_record.status = "FAILED"
+                build_record.save()
+                return
+
+            build_record.build_number = build_number
+            build_record.status = "RUNNING"
+            build_record.start_time = timezone.now()
+            build_record.save()
+            log_offset = 0
+            logger.info(f"Build started with build_number={build_number}")
 
         # Progressive logs and build status loop
-        log_offset = 0
         poll_interval_logs = 2
         poll_interval_status = 15
         last_status_check = time.time()
@@ -154,6 +177,7 @@ def start_and_poll_build(build_id):
             "status": build_record.status,
             "start_time": str(build_record.start_time),
             "end_time": str(build_record.end_time),
+            "last_log_offset": log_offset,
         })
         logger.info(f"📦 Meta saved and all tasks completed for {job_name} #{build_number}")
 
