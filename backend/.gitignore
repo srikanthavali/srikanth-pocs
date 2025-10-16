@@ -24,3 +24,5 @@ venv.bak/
 
 
 downloads/
+
+jenkins/builds/logs
